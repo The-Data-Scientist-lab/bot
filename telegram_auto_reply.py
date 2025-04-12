@@ -176,8 +176,11 @@ async def main():
     try:
         logger.info("Starting Telegram auto-reply client...")
         
+        # Use a unique session name for Render
+        session_name = 'render_session'
+        
         # Initialize the client with session file
-        client = TelegramClient('auto_reply_session', API_ID, API_HASH)
+        client = TelegramClient(session_name, API_ID, API_HASH)
         
         # Connect to Telegram
         await client.connect()
