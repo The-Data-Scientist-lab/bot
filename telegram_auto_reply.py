@@ -17,7 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Telegram API credentials
-API_ID = os.getenv('API_ID', '24107383')
+API_ID = int(os.getenv('API_ID', '24107383'))  # Convert to integer
 API_HASH = os.getenv('API_HASH', '5c246bb589d22155fac7e56b1c94822c')
 PHONE_NUMBER = os.getenv('PHONE_NUMBER', '+919758781006')
 
