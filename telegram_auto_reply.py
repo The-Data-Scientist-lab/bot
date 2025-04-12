@@ -17,9 +17,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Telegram API credentials
-API_ID = os.getenv('API_ID')
-API_HASH = os.getenv('API_HASH')
-PHONE_NUMBER = os.getenv('PHONE_NUMBER')
+API_ID = os.getenv('API_ID', '24107383')
+API_HASH = os.getenv('API_HASH', '5c246bb589d22155fac7e56b1c94822c')
+PHONE_NUMBER = os.getenv('PHONE_NUMBER', '+919758781006')
 
 # Auto-reply message
 AUTO_REPLY_MESSAGE = """
@@ -176,8 +176,8 @@ async def main():
     try:
         logger.info("Starting Telegram auto-reply client...")
         
-        # Load replied users list
-        load_replied_users()
+        # Initialize the client with session file
+        client = TelegramClient('auto_reply_session', API_ID, API_HASH)
         
         # Connect to Telegram
         await client.connect()
@@ -185,45 +185,100 @@ async def main():
         # Check if we need to log in
         if not await client.is_user_authorized():
             logger.info("Not authorized. Starting login process...")
-            await client.start(phone=PHONE_NUMBER)
-        else:
-            logger.info("Already authorized. Continuing...")
+            try:
+                # Send code request
+                await client.send_code_request(PHONE_NUMBER)
+                logger.info("Verification code sent to your Telegram account")
+                logger.info("Please check your Telegram app for the code")
+                logger.info("The bot will automatically retry in 60 seconds")
+                # Wait for 60 seconds before retrying
+                await asyncio.sleep(60)
+                return
+            except Exception as e:
+                logger.error(f"Error during login: {str(e)}")
+                return
         
-        # Get information about the logged-in user
-        me = await client.get_me()
-        logger.info(f"Logged in as {me.first_name} {me.last_name if me.last_name else ''} (ID: {me.id})")
+        # Load replied users
+        replied_users = load_replied_users()
+        logger.info(f"Loaded {len(replied_users)} replied users")
         
-        # Log the absolute path of the image files
-        logger.info(f"Price list image path: {os.path.abspath(PRICE_LIST_IMAGE)}")
-        if os.path.exists(PRICE_LIST_IMAGE):
-            logger.info("Price list image exists and is accessible")
-        else:
-            logger.error("Price list image not found!")
-            
-        logger.info(f"QR code image path: {os.path.abspath(QR_CODE_IMAGE)}")
-        if os.path.exists(QR_CODE_IMAGE):
-            logger.info("QR code image exists and is accessible")
-        else:
-            logger.error("QR code image not found!")
+        # Set up event handler
+        @client.on(events.NewMessage(incoming=True))
+        async def handle_new_message(event):
+            try:
+                # Get the chat ID and sender info
+                chat_id = event.chat_id
+                sender = await event.get_sender()
+                
+                # Check if it's a private chat
+                if isinstance(sender, User):
+                    # Log the message
+                    logger.info(f"Received message from {sender.first_name} {sender.last_name} (ID: {chat_id}): {event.message.text}")
+                    
+                    # Check if we've already replied to this user
+                    if str(chat_id) not in replied_users:
+                        try:
+                            # Send the auto-reply message
+                            await event.respond(AUTO_REPLY_MESSAGE)
+                            logger.info(f"Sent auto-reply to {sender.first_name} {sender.last_name}")
+                            
+                            # Send the first image (price list)
+                            try:
+                                await client.send_file(
+                                    chat_id,
+                                    PRICE_LIST_IMAGE,
+                                    caption="⚠️ PRICE LIST ⚠️"
+                                )
+                                logger.info(f"Sent price list image to {sender.first_name} {sender.last_name}")
+                            except Exception as e:
+                                logger.error(f"Error sending price list image: {str(e)}")
+                            
+                            # Send the second image (QR code)
+                            try:
+                                await client.send_file(
+                                    chat_id,
+                                    QR_CODE_IMAGE,
+                                    caption="⚠️ QR CODE AND DETAILS ⚠️"
+                                )
+                                logger.info(f"Sent QR code image to {sender.first_name} {sender.last_name}")
+                            except Exception as e:
+                                logger.error(f"Error sending QR code image: {str(e)}")
+                            
+                            # Send payment message
+                            try:
+                                await client.send_message(chat_id, PAYMENT_MESSAGE)
+                                logger.info(f"Sent payment message to {sender.first_name} {sender.last_name}")
+                            except Exception as e:
+                                logger.error(f"Error sending payment message: {str(e)}")
+                            
+                            # Mark user as replied
+                            replied_users[str(chat_id)] = {
+                                'first_name': sender.first_name,
+                                'last_name': sender.last_name,
+                                'username': sender.username,
+                                'message_count': 1
+                            }
+                            save_replied_users(replied_users)
+                            logger.info(f"Marked {sender.first_name} {sender.last_name} as replied")
+                        except Exception as e:
+                            logger.error(f"Error sending auto-reply: {str(e)}")
+                    else:
+                        # Update message count for existing user
+                        replied_users[str(chat_id)]['message_count'] += 1
+                        save_replied_users(replied_users)
+                        logger.info(f"Already replied to {sender.first_name} {sender.last_name} before, skipping")
+            except Exception as e:
+                logger.error(f"Error handling message: {str(e)}")
         
-        # Keep the script running
+        # Start the client
         logger.info("Auto-reply is active. Press Ctrl+C to stop.")
         await client.run_until_disconnected()
+        
     except Exception as e:
-        logger.error(f"Error in main function: {e}")
+        logger.error(f"Error in main function: {str(e)}")
     finally:
-        # Ensure proper cleanup
-        await client.disconnect()
+        if 'client' in locals():
+            await client.disconnect()
 
 if __name__ == '__main__':
-    try:
-        # Run the main function
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Script stopped by user")
-    except Exception as e:
-        logger.error(f"Script error: {e}")
-    finally:
-        # Ensure the client is properly disconnected
-        if client.is_connected():
-            asyncio.run(client.disconnect()) 
+    asyncio.run(main()) 
